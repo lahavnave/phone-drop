@@ -19,6 +19,8 @@ video,#still{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;back
 #fb label{display:flex;align-items:center;justify-content:center;min-height:150px;margin:18px 0;border-radius:22px;
  background:#2f6bff;font-size:26px;font-weight:700;cursor:pointer}
 #fb p{color:#9aa3b2}
+#done{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px}
+#done b{font-size:88px;line-height:1;color:#4ade80}#done h2{font-size:28px;margin:14px 0 8px}#done p{font-size:19px;color:#d1d5db;margin:0}
 </style></head><body>
 <video id="v" autoplay playsinline muted></video>
 <img id="still" alt="">
@@ -28,6 +30,7 @@ video,#still{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;back
 <div id="fb"><p id="fbMsg">Tap below to take the photo.</p>
 <label>&#128247; Take photo<input id="cam" type="file" accept="image/*" capture="environment"></label></div>
 <div id="st"></div>
+<div id="done"><b>&#10003;</b><h2>Sent to your PC</h2><p>Swipe back to close this tab.</p></div>
 <script>
 var TOPIC = location.hash.slice(1), NTFY = "https://ntfy.sh", LIMIT = 1900000, MAXPX = 2048;
 var $ = function(id){ return document.getElementById(id); };
@@ -57,9 +60,11 @@ async function upload(blob){
   var r = await fetch(NTFY + "/" + TOPIC, {method: "PUT", body: blob, headers: {"Filename": "photo.jpg"}});
   if (!r.ok) throw new Error("Relay answered " + r.status);
   stopCam();
-  say("✓ Sent to your PC", "ok");
-  window.close();  // works when the tab was opened by the QR scan; otherwise the message stays
-  setTimeout(function(){ say("✓ Sent to your PC – you can close this tab.", "ok"); }, 400);
+  say("");
+  $("shutter").hidden = true; $("gal").hidden = true; $("fb").style.display = "none";
+  $("done").style.display = "flex";
+  // Android Chrome does not let a page close a tab another app opened; this only helps elsewhere.
+  try { window.close(); } catch(e) {}
 }
 
 async function send(blob){
