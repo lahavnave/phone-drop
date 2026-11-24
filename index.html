@@ -186,10 +186,29 @@ async function start(){
   }
 }
 
+// ---- the PC window was closed: stop the camera and say so ----
+var closedByPc = false;
+function pcClosed(){
+  if (closedByPc) return; closedByPc = true;
+  if ($("done").style.display === "flex") return;  // already finished here
+  busy = true; finished = true;
+  $("still").style.display = "none";
+  showDone("Closed on your PC");
+}
+function listenForPc(){
+  if (!/^pd[0-9a-f]{24}$/.test(TOPIC) || !window.EventSource) return;
+  // only messages from now on; the relay sends them as they arrive
+  var es = new EventSource(NTFY + "/" + TOPIC + "/sse");
+  es.onmessage = function(ev){
+    try { if (JSON.parse(ev.data).message === "pc:closed") { es.close(); pcClosed(); } } catch(e) {}
+  };
+}
+
 $("shutter").addEventListener("click", shoot);
 $("v").addEventListener("click", shoot);
 $("finish").addEventListener("click", finish);
 $("galIn").addEventListener("change", function(){ var f = Array.prototype.slice.call(this.files); this.value = ""; fromFiles(f); });
 $("cam").addEventListener("change", function(){ var f = Array.prototype.slice.call(this.files); this.value = ""; fromFiles(f); });
 start();
+listenForPc();
 </script></body></html>
