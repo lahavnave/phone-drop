@@ -11,39 +11,57 @@ video,#still{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;back
 #gal{position:fixed;right:22px;bottom:calc(52px + env(safe-area-inset-bottom));width:52px;height:52px;border-radius:14px;
  background:rgba(0,0,0,.45);border:2px solid rgba(255,255,255,.7);color:#fff;font-size:22px;display:flex;align-items:center;justify-content:center;cursor:pointer}
 #gal input,#fb input{display:none}
+#finish{position:fixed;left:18px;bottom:calc(50px + env(safe-area-inset-bottom));min-width:96px;height:56px;border-radius:28px;border:0;
+ background:#16a34a;color:#fff;font:700 18px system-ui,sans-serif;padding:0 18px;cursor:pointer}
+#finish:disabled{background:rgba(0,0,0,.45);color:#9ca3af}
+#pages{position:fixed;left:0;right:0;bottom:calc(140px + env(safe-area-inset-bottom));display:flex;gap:8px;padding:0 14px;overflow-x:auto}
+#pages div{position:relative;flex:none}
+#pages img{width:54px;height:72px;object-fit:cover;border-radius:6px;border:2px solid #fff;display:block}
+#pages span{position:absolute;right:3px;bottom:3px;font-size:12px;background:rgba(0,0,0,.6);border-radius:8px;padding:0 5px}
+#mode{position:fixed;left:50%;top:calc(14px + env(safe-area-inset-top));transform:translateX(-50%);background:rgba(0,0,0,.55);
+ border-radius:16px;padding:6px 14px;font-size:15px;font-weight:600;white-space:nowrap}
 #flash{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .25s}
-#st{position:fixed;left:0;right:0;top:calc(18px + env(safe-area-inset-top));text-align:center;font-size:19px;font-weight:600;
+#st{position:fixed;left:0;right:0;top:calc(56px + env(safe-area-inset-top));text-align:center;font-size:18px;font-weight:600;
  text-shadow:0 1px 4px #000;padding:0 16px}
 .ok{color:#4ade80}.err{color:#f87171}
 #fb{display:none;position:fixed;inset:0;background:#0f1217;padding:80px 18px;text-align:center}
 #fb label{display:flex;align-items:center;justify-content:center;min-height:150px;margin:18px 0;border-radius:22px;
  background:#2f6bff;font-size:26px;font-weight:700;cursor:pointer}
 #fb p{color:#9aa3b2}
-#done{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px}
+#fb{z-index:1}#finish,#pages,#st,#gal{z-index:2}
+#done{display:none;position:fixed;inset:0;background:rgba(0,0,0,.78);flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px}
 #done b{font-size:88px;line-height:1;color:#4ade80}#done h2{font-size:28px;margin:14px 0 8px}#done p{font-size:19px;color:#d1d5db;margin:0}
 </style></head><body>
 <video id="v" autoplay playsinline muted></video>
 <img id="still" alt="">
 <div id="flash"></div>
+<div id="mode" hidden></div>
+<div id="pages"></div>
+<button id="finish" hidden disabled>Done</button>
 <button id="shutter" aria-label="Take photo" hidden></button>
 <label id="gal" aria-label="Choose from gallery" hidden>&#128444;<input id="galIn" type="file" accept="image/*"></label>
 <div id="fb"><p id="fbMsg">Tap below to take the photo.</p>
 <label>&#128247; Take photo<input id="cam" type="file" accept="image/*" capture="environment"></label></div>
 <div id="st"></div>
-<div id="done"><b>&#10003;</b><h2>Sent to your PC</h2><p>Swipe back to close this tab.</p></div>
+<div id="done"><b>&#10003;</b><h2 id="doneTitle">Sent to your PC</h2><p>Swipe back to close this tab.</p></div>
 <script>
-var TOPIC = location.hash.slice(1), NTFY = "https://ntfy.sh", LIMIT = 1900000, MAXPX = 2048;
+var TOPIC = location.hash.slice(1), NTFY = "https://ntfy.sh", LIMIT = 1900000;
+var MODE = (new URLSearchParams(location.search).get("m") || "clip");
+if (["clip", "pdf", "text"].indexOf(MODE) < 0) MODE = "clip";
+var MULTI = MODE === "pdf", MAXPX = MODE === "clip" ? 2048 : 2560;
 var $ = function(id){ return document.getElementById(id); };
-var stream = null, busy = false;
+var stream = null, busy = false, finished = false, pageCount = 0, uploads = Promise.resolve(), failed = false;
+
 function say(t, c){ $("st").textContent = t; $("st").className = c || ""; }
 function toBlob(c, q){ return new Promise(function(r){ c.toBlob(r, "image/jpeg", q); }); }
 function fallback(msg){ stopCam(); $("fb").style.display = "block"; if (msg) $("fbMsg").textContent = msg; }
 function stopCam(){ if (stream) { stream.getTracks().forEach(function(t){ t.stop(); }); stream = null; } }
 
 async function encode(src, w, h){
-  // Draw src (video, bitmap) into a canvas no larger than MAXPX and keep it under the relay's size limit.
-  var sizes = [MAXPX, 1600, 1280], quals = [0.85, 0.75, 0.65];
+  // Fit src into MAXPX and keep the JPEG under the relay's 2 MB limit.
+  var sizes = [MAXPX, 2048, 1600, 1280], quals = [0.85, 0.75, 0.65];
   for (var i = 0; i < sizes.length; i++) {
+    if (sizes[i] > MAXPX) continue;
     var k = Math.min(1, sizes[i] / Math.max(w, h)), c = document.createElement("canvas");
     c.width = Math.round(w * k); c.height = Math.round(h * k);
     c.getContext("2d").drawImage(src, 0, 0, c.width, c.height);
@@ -55,56 +73,95 @@ async function encode(src, w, h){
   throw new Error("Picture too large.");
 }
 
-async function upload(blob){
-  say("Sending…");
-  var r = await fetch(NTFY + "/" + TOPIC, {method: "PUT", body: blob, headers: {"Filename": "photo.jpg"}});
+async function put(body, headers){
+  var r = await fetch(NTFY + "/" + TOPIC, {method: "PUT", body: body, headers: headers || {}});
   if (!r.ok) throw new Error("Relay answered " + r.status);
-  stopCam();
-  say("");
-  $("shutter").hidden = true; $("gal").hidden = true; $("fb").style.display = "none";
-  $("done").style.display = "flex";
-  // Android Chrome does not let a page close a tab another app opened; this only helps elsewhere.
-  try { window.close(); } catch(e) {}
 }
 
-async function send(blob){
+function showDone(title){
+  stopCam(); say("");
+  ["shutter", "gal", "finish"].forEach(function(id){ $(id).hidden = true; });
+  $("pages").style.display = "none"; $("mode").hidden = true; $("fb").style.display = "none";
+  $("doneTitle").textContent = title; $("done").style.display = "flex";
+  try { window.close(); } catch(e) {}  // Android Chrome ignores this for tabs opened by another app
+}
+
+// ---- single photo (clipboard / text) ----
+async function sendOne(blob){
   if (busy) return; busy = true;
-  try { await upload(blob); }
-  catch(e){ busy = false; say("✗ " + (e.message || e) + " – try again.", "err"); if (stream) $("still").style.display = "none"; }
+  try { say("Sending…"); await put(blob, {"Filename": "photo.jpg"}); showDone("Sent to your PC"); }
+  catch(e){ busy = false; say("✗ " + (e.message || e) + " – try again.", "err"); $("still").style.display = "none"; }
+}
+
+// ---- several pages (pdf) ----
+function addPage(blob, thumbUrl){
+  pageCount++;
+  var n = pageCount, d = document.createElement("div"), im = document.createElement("img"), s = document.createElement("span");
+  im.src = thumbUrl; s.textContent = n; d.append(im, s); $("pages").append(d);
+  $("pages").scrollLeft = 1e6;
+  $("finish").disabled = false; $("finish").textContent = "Done (" + n + ")";
+  var name = "page-" + String(n).padStart(3, "0") + ".jpg";
+  uploads = uploads.then(function(){
+    return put(blob, {"Filename": name}).then(function(){ s.textContent = n + " ✓"; },
+      function(e){ failed = true; s.textContent = n + " ✗"; say("✗ Page " + n + " failed: " + (e.message || e), "err"); });
+  });
+}
+async function finish(){
+  if (!pageCount || finished) return;
+  finished = true; $("finish").disabled = true; say("Sending " + pageCount + " page" + (pageCount > 1 ? "s" : "") + "…");
+  await uploads;
+  if (failed) { say("✗ Some pages didn't upload. Scan a new QR code and try again.", "err"); return; }
+  try { await put("done:" + pageCount); showDone("Sent " + pageCount + " page" + (pageCount > 1 ? "s" : "") + " to your PC"); }
+  catch(e){ finished = false; $("finish").disabled = false; say("✗ " + (e.message || e), "err"); }
+}
+
+async function grab(){
+  // Full-resolution still for documents where the browser supports it; otherwise the live frame.
+  var v = $("v");
+  if (MODE !== "clip" && window.ImageCapture && stream) {
+    try {
+      var b = await new ImageCapture(stream.getVideoTracks()[0]).takePhoto();
+      var bmp = await createImageBitmap(b, {imageOrientation: "from-image"});
+      return {src: bmp, w: bmp.width, h: bmp.height};
+    } catch(e) {}
+  }
+  var c = document.createElement("canvas"); c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext("2d").drawImage(v, 0, 0);
+  return {src: c, w: c.width, h: c.height};
 }
 
 async function shoot(){
-  if (busy || !stream) return;
-  var v = $("v"); if (!v.videoWidth) return;
+  if (busy || finished || !stream || !$("v").videoWidth) return;
   $("flash").style.opacity = 1; setTimeout(function(){ $("flash").style.opacity = 0; }, 120);
-  var c = document.createElement("canvas"); c.width = v.videoWidth; c.height = v.videoHeight;
-  c.getContext("2d").drawImage(v, 0, 0);
-  $("still").src = c.toDataURL("image/jpeg", 0.6); $("still").style.display = "block";
-  try { send(await encode(c, c.width, c.height)); }
-  catch(e){ say("✗ " + (e.message || e), "err"); }
+  if (MULTI) busy = true;
+  try {
+    var g = await grab(), blob = await encode(g.src, g.w, g.h);
+    if (MULTI) { addPage(blob, URL.createObjectURL(blob)); }
+    else { $("still").src = URL.createObjectURL(blob); $("still").style.display = "block"; sendOne(blob); }
+  } catch(e) { say("✗ " + (e.message || e), "err"); }
+  if (MULTI) busy = false;
 }
 
-async function fromFile(file){
-  if (!file) return;
-  try {
-    var bmp = await createImageBitmap(file, {imageOrientation: "from-image"});
-    $("fb").style.display = "none";
-    $("still").src = URL.createObjectURL(file); $("still").style.display = "block";
-    send(await encode(bmp, bmp.width, bmp.height));
-  } catch(e) {
-    if (file.size <= LIMIT) send(file); else say("✗ This picture can't be read here.", "err");
+async function fromFiles(files){
+  for (var i = 0; i < files.length; i++) {
+    var file = files[i], blob;
+    try { var bmp = await createImageBitmap(file, {imageOrientation: "from-image"}); blob = await encode(bmp, bmp.width, bmp.height); }
+    catch(e) { if (file.size <= LIMIT) blob = file; else { say("✗ A picture couldn't be read.", "err"); continue; } }
+    if (MULTI) addPage(blob, URL.createObjectURL(blob));
+    else { $("fb").style.display = "none"; $("still").src = URL.createObjectURL(blob); $("still").style.display = "block"; sendOne(blob); return; }
   }
 }
 
 async function start(){
   if (!/^pd[0-9a-f]{24}$/.test(TOPIC)) { say("Scan the QR code shown on your PC to use this page."); return; }
-  $("gal").hidden = false;
+  $("mode").textContent = {clip: "Photo → clipboard", pdf: "Scan pages → PDF", text: "Text → clipboard"}[MODE];
+  $("mode").hidden = false; $("gal").hidden = false;
+  if (MULTI) { $("finish").hidden = false; $("galIn").multiple = true; }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { fallback(); return; }
   try {
     stream = await navigator.mediaDevices.getUserMedia({audio: false,
       video: {facingMode: {ideal: "environment"}, width: {ideal: 4096}, height: {ideal: 4096}}});
-    $("v").srcObject = stream;
-    $("shutter").hidden = false;
+    $("v").srcObject = stream; $("shutter").hidden = false;
   } catch(e) {
     fallback("Camera access was blocked. Allow the camera for this site to open straight into photo mode, or tap below.");
   }
@@ -112,8 +169,8 @@ async function start(){
 
 $("shutter").addEventListener("click", shoot);
 $("v").addEventListener("click", shoot);
-$("galIn").addEventListener("change", function(){ var f = this.files[0]; this.value = ""; fromFile(f); });
-$("cam").addEventListener("change", function(){ var f = this.files[0]; this.value = ""; fromFile(f); });
-window.__pdSend = send;  // used by the test harness
+$("finish").addEventListener("click", finish);
+$("galIn").addEventListener("change", function(){ var f = Array.prototype.slice.call(this.files); this.value = ""; fromFiles(f); });
+$("cam").addEventListener("change", function(){ var f = Array.prototype.slice.call(this.files); this.value = ""; fromFiles(f); });
 start();
 </script></body></html>
