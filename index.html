@@ -143,6 +143,7 @@ async function grab(){
 async function shoot(){
   if (busy || finished || !stream || !$("v").videoWidth) return;
   $("flash").style.opacity = 1; setTimeout(function(){ $("flash").style.opacity = 0; }, 120);
+  if ($("st").textContent === "Fit the whole page in view") say("");
   if (MULTI) busy = true;
   try {
     var g = await grab(), blob = await encode(g.src, g.w, g.h);
@@ -179,6 +180,7 @@ async function start(){
     stream = await navigator.mediaDevices.getUserMedia({audio: false,
       video: {facingMode: {ideal: "environment"}, width: {ideal: 4096}, height: {ideal: 4096}}});
     $("v").srcObject = stream; $("shutter").hidden = false;
+    if (MODE !== "clip") say("Fit the whole page in view");
   } catch(e) {
     fallback("Camera access was blocked. Allow the camera for this site to open straight into photo mode, or tap below.");
   }
