@@ -49,6 +49,7 @@ var TOPIC = location.hash.slice(1), NTFY = "https://ntfy.sh", LIMIT = 1900000;
 var MODE = (new URLSearchParams(location.search).get("m") || "clip");
 if (["clip", "pdf", "text"].indexOf(MODE) < 0) MODE = "clip";
 var MULTI = MODE === "pdf", MAXPX = MODE === "clip" ? 2048 : 2560;
+var KEEP = MODE === "clip" && new URLSearchParams(location.search).get("k") === "1", sentCount = 0;
 var $ = function(id){ return document.getElementById(id); };
 var stream = null, busy = false, finished = false, pageCount = 0, uploads = Promise.resolve(), failed = false;
 
@@ -89,7 +90,16 @@ function showDone(title){
 // ---- single photo (clipboard / text) ----
 async function sendOne(blob){
   if (busy) return; busy = true;
-  try { say("Sending…"); await put(blob, {"Filename": "photo.jpg"}); showDone("Sent to your PC"); }
+  try {
+    say("Sending…"); await put(blob, {"Filename": "photo.jpg"});
+    if (KEEP) {  // continuous: stay in camera mode for the next photo
+      sentCount++; busy = false;
+      say("✓ Sent" + (sentCount > 1 ? " (" + sentCount + ")" : "") + " – take another", "ok");
+      setTimeout(function(){ if (!busy) $("still").style.display = "none"; }, 500);
+      return;
+    }
+    showDone("Sent to your PC");
+  }
   catch(e){ busy = false; say("✗ " + (e.message || e) + " – try again.", "err"); $("still").style.display = "none"; }
 }
 
@@ -148,15 +158,22 @@ async function fromFiles(files){
     try { var bmp = await createImageBitmap(file, {imageOrientation: "from-image"}); blob = await encode(bmp, bmp.width, bmp.height); }
     catch(e) { if (file.size <= LIMIT) blob = file; else { say("✗ A picture couldn't be read.", "err"); continue; } }
     if (MULTI) addPage(blob, URL.createObjectURL(blob));
-    else { $("fb").style.display = "none"; $("still").src = URL.createObjectURL(blob); $("still").style.display = "block"; sendOne(blob); return; }
+    else {
+      if (!KEEP) $("fb").style.display = "none";
+      $("still").src = URL.createObjectURL(blob); $("still").style.display = "block";
+      if (KEEP) { await sendOne(blob); continue; }
+      sendOne(blob); return;
+    }
   }
 }
 
 async function start(){
   if (!/^pd[0-9a-f]{24}$/.test(TOPIC)) { say("Scan the QR code shown on your PC to use this page."); return; }
-  $("mode").textContent = {clip: "Photo → clipboard", pdf: "Scan pages → PDF", text: "Text → clipboard"}[MODE];
+  $("mode").textContent = KEEP ? "Photos → clipboard (keeps going)" :
+    {clip: "Photo → clipboard", pdf: "Scan pages → PDF", text: "Text → clipboard"}[MODE];
   $("mode").hidden = false; $("gal").hidden = false;
   if (MULTI) { $("finish").hidden = false; $("galIn").multiple = true; }
+  if (KEEP) $("galIn").multiple = true;
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { fallback(); return; }
   try {
     stream = await navigator.mediaDevices.getUserMedia({audio: false,
