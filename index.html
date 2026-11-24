@@ -1,0 +1,69 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Send to PC</title><style>
+body{font-family:system-ui,sans-serif;margin:0;padding:22px 18px;background:#0f1217;color:#eef1f6;text-align:center}
+h1{font-size:24px;margin:6px 0 4px}p{color:#9aa3b2;margin:6px 0}
+label{display:flex;align-items:center;justify-content:center;min-height:150px;margin:18px 0 10px;border-radius:22px;
+ background:#2f6bff;color:#fff;font-size:26px;font-weight:700;cursor:pointer}
+label.g{min-height:56px;font-size:17px;font-weight:500;background:#2a303b}
+input{display:none}#st{font-size:19px;margin-top:18px;min-height:28px}.ok{color:#4ade80}.err{color:#f87171}
+img{max-width:60%;border-radius:12px;margin-top:12px}a{color:#9aa3b2;font-size:14px}
+</style></head><body>
+<h1>Send to PC</h1><p>One photo goes to your computer's clipboard.</p>
+<div id="ui">
+<label>&#128247; Take photo<input id="cam" type="file" accept="image/*" capture="environment"></label>
+<label class="g">Choose from gallery<input id="gal" type="file" accept="image/*"></label>
+<p><a href="#" id="test">Send a test picture</a></p>
+</div>
+<div id="st"></div>
+<script>if(!/^pd[0-9a-f]{24}$/.test(location.hash.slice(1))){document.getElementById("ui").hidden=true;document.getElementById("st").textContent="Scan the QR code shown on your PC to use this page.";}</script><img id="pv" alt="" hidden>
+<script>
+var TOPIC = location.hash.slice(1), NTFY = "https://ntfy.sh", LIMIT = 1900000;
+var st = document.getElementById("st");
+function say(t, c){ st.textContent = t; st.className = c || ""; }
+function toBlob(c, q){ return new Promise(function(r){ c.toBlob(r, "image/jpeg", q); }); }
+async function shrink(file){
+  var bmp;
+  try { bmp = await createImageBitmap(file, {imageOrientation: "from-image"}); }
+  catch(e){ if (file.size <= LIMIT) return file; throw new Error("This picture format can't be read here."); }
+  var sizes = [2560, 2048, 1600, 1280], quals = [0.9, 0.8, 0.7];
+  for (var i = 0; i < sizes.length; i++) {
+    var k = Math.min(1, sizes[i] / Math.max(bmp.width, bmp.height));
+    var c = document.createElement("canvas");
+    c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+    for (var j = 0; j < quals.length; j++) {
+      var b = await toBlob(c, quals[j]);
+      if (b && b.size <= LIMIT) return b;
+    }
+  }
+  throw new Error("Picture too large.");
+}
+async function send(file){
+  document.getElementById("ui").hidden = true;
+  say("Sending…");
+  try {
+    var b = await shrink(file);
+    var pv = document.getElementById("pv"); pv.src = URL.createObjectURL(b); pv.hidden = false;
+    var r = await fetch(NTFY + "/" + TOPIC, {method: "PUT", body: b, headers: {"Filename": "photo.jpg"}});
+    if (!r.ok) throw new Error("Relay answered " + r.status);
+    say("✓ Sent! It's on your PC's clipboard now. You can close this page.", "ok");
+  } catch(e) {
+    say("✗ " + (e.message || e) + " – try again.", "err");
+    document.getElementById("ui").hidden = false;
+  }
+}
+["cam", "gal"].forEach(function(id){
+  var el = document.getElementById(id);
+  el.addEventListener("change", function(){ var f = el.files[0]; el.value = ""; if (f) send(f); });
+});
+document.getElementById("test").addEventListener("click", async function(ev){
+  ev.preventDefault();
+  var c = document.createElement("canvas"); c.width = 800; c.height = 600;
+  var g = c.getContext("2d"), gr = g.createLinearGradient(0, 0, 800, 600);
+  gr.addColorStop(0, "#2f6bff"); gr.addColorStop(1, "#16a34a"); g.fillStyle = gr; g.fillRect(0, 0, 800, 600);
+  g.fillStyle = "#fff"; g.textAlign = "center"; g.font = "bold 60px sans-serif"; g.fillText("Test picture", 400, 280);
+  g.font = "34px sans-serif"; g.fillText(new Date().toLocaleTimeString(), 400, 345);
+  send(new File([await toBlob(c, 0.9)], "test.jpg", {type: "image/jpeg"}));
+});
+</script></body></html>
